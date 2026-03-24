@@ -193,27 +193,19 @@ def gmm_train(E, gauss_pdf, n_realignment):
     return w, m, sigma
 
 def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
-    ''' 
-    Function to estimate a posterior probability that frame isn't speech
+    # 1. Identificar cuál es el componente de VOZ (el de mayor media de energía)
+    idx_voice = np.argmax(m)
+    idx_noise = 1 - idx_voice # Asumiendo solo 2 componentes
     
-    Se calcula la probabilidad de que cada ventana no contenga voz.
-    Para hacer esto, se utiliza una función "gauss_pdf" que devuelve la densidad de probabilidad de una distribución normal para un valor dado de x, una media mu y una desviación estándar sigma.
-    Los parámetros del modelo de mezcla de gaussianas (ponderaciones, medias y desviaciones estándar) se pasan como argumentos a la función.
-    Dentro del bucle for, se calcula la probabilidad de que cada ventana pertenezca a cada componente de la mezcla de gaussianas utilizando la función "gauss_pdf", 
-    y se multiplican estas probabilidades por las ponderaciones correspondientes.
-    El resultado se almacena en la variable "g0".
-    Finalmente, se calcula la probabilidad de que cada marco contenga voz restando "g0" de 1.
-    El resultado se almacena en la variable "g1" y se devuelve como resultado de la función.
-    '''
+    # 2. Calcular la densidad (verosimilitud) para cada componente
+    p_noise = w[idx_noise] * gauss_pdf(E, m[idx_noise], sigma[idx_noise])
+    p_voice = w[idx_voice] * gauss_pdf(E, m[idx_voice], sigma[idx_voice])
     
-    g0 = np.zeros(len(E))
-
-    for j in range(len(w)):
-        g0 += gauss_pdf(E, m[j], sigma[j]) * w[j]
-
-    g1 = np.ones(len(E)) - g0
-
-    return g1
+    # 3. Calcular la probabilidad a posteriori de VOZ (Bayes)
+    # Añadimos 1e-10 para evitar división por cero
+    post_prob_voice = p_voice / (p_noise + p_voice + 1e-10)
+    
+    return post_prob_voice
 
 def energy_gmm_vad(signal, window, shift, gauss_pdf, n_realignment, vad_thr, mask_size_morph_filt):
     # Function to compute markup energy voice activity detector based of gaussian mixtures model
@@ -233,17 +225,20 @@ def energy_gmm_vad(signal, window, shift, gauss_pdf, n_realignment, vad_thr, mas
     # Train parameters of gaussian mixture models
     w, m, sigma = gmm_train(E_norm, gauss_pdf, n_realignment=10)
     
-    # Estimate a posterior probability that frame isn't speech
-    g0 = eval_frame_post_prob(E_norm, gauss_pdf, w, m, sigma)
+    # Calculamos la probabilidad a posteriori de que SEA voz (0.0 a 1.0)
+    # Ahora g1 = 1 significa "Voz con total seguridad"
+    g1 = eval_frame_post_prob(E_norm, gauss_pdf, w, m, sigma)
     
     # Compute real VAD's markup
-    vad_frame_markup_real = (g0 < vad_thr).astype('float32')  # frame VAD's markup
+    vad_frame_markup_real = (g1 > vad_thr).astype('float32')  # frame VAD's markup
 
-    vad_markup_real = np.zeros(len(signal)).astype('float32') # sample VAD's markup
-    for idx in range(len(vad_frame_markup_real)):
-        vad_markup_real[idx*shift:shift+idx*shift] = vad_frame_markup_real[idx]
+    # Repite cada decisión del frame 'shift' veces y recorta al largo de la señal original
+    vad_markup_real = np.repeat(vad_frame_markup_real, shift)[:len(signal)]
 
-    vad_markup_real[len(vad_frame_markup_real)*shift - len(signal):] = vad_frame_markup_real[-1]
+    # Si la señal es un poco más larga que los frames procesados, rellena con la última decisión
+    if len(vad_markup_real) < len(signal):
+        padding = np.full(len(signal) - len(vad_markup_real), vad_frame_markup_real[-1])
+        vad_markup_real = np.concatenate([vad_markup_real, padding])
     
     # Morphology Filters
     vad_markup_real = closing(vad_markup_real, np.ones(mask_size_morph_filt)) # close filter
