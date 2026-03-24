@@ -193,19 +193,27 @@ def gmm_train(E, gauss_pdf, n_realignment):
     return w, m, sigma
 
 def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
-    # 1. Identificar cuál es el componente de VOZ (el de mayor media de energía)
-    idx_voice = np.argmax(m)
-    idx_noise = 1 - idx_voice # Asumiendo solo 2 componentes
+    ''' 
+    Function to estimate a posterior probability that frame IS speech
     
-    # 2. Calcular la densidad (verosimilitud) para cada componente
-    p_noise = w[idx_noise] * gauss_pdf(E, m[idx_noise], sigma[idx_noise])
-    p_voice = w[idx_voice] * gauss_pdf(E, m[idx_voice], sigma[idx_voice])
+    Se calcula la probabilidad de que cada ventana no contenga voz.
+    Para hacer esto, se utiliza una función "gauss_pdf" que devuelve la densidad de probabilidad de una distribución normal para un valor dado de x, una media mu y una desviación estándar sigma.
+    Los parámetros del modelo de mezcla de gaussianas (ponderaciones, medias y desviaciones estándar) se pasan como argumentos a la función.
+    Dentro del bucle for, se calcula la probabilidad de que cada ventana pertenezca a cada componente de la mezcla de gaussianas utilizando la función "gauss_pdf", 
+    y se multiplican estas probabilidades por las ponderaciones correspondientes.
+    El resultado se almacena en la variable "g0".
+    Finalmente, se calcula la probabilidad de que cada marco contenga voz restando "g0" de 1.
+    El resultado se almacena en la variable "g1" y se devuelve como resultado de la función.
+    '''
     
-    # 3. Calcular la probabilidad a posteriori de VOZ (Bayes)
-    # Añadimos 1e-10 para evitar división por cero
-    post_prob_voice = p_voice / (p_noise + p_voice + 1e-10)
-    
-    return post_prob_voice
+    g0 = np.zeros(len(E))
+
+    for j in range(len(w)):
+        g0 += gauss_pdf(E, m[j], sigma[j]) * w[j]
+
+    g1 = np.ones(len(E)) - g0
+
+    return g1
 
 def energy_gmm_vad(signal, window, shift, gauss_pdf, n_realignment, vad_thr, mask_size_morph_filt):
     # Function to compute markup energy voice activity detector based of gaussian mixtures model
