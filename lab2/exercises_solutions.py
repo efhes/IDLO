@@ -84,7 +84,8 @@ def load_vad_markup(path_to_rttm, signal, fs):
                 start_sample = int(start_time * fs)
                 end_sample = int(end_time * fs)
                 vad_markup[start_sample:end_sample] = 1.0
-
+    
+    print(f"DEBUG: {os.path.basename(path_to_rttm)} | Voz en etiquetas: {np.mean(vad_markup)*100:.1f}%")
     return vad_markup
 
 def framing(signal, window=320, shift=160):
